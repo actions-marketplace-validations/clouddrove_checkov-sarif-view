@@ -1,0 +1,102 @@
+name: 'Sarif Vigil'
+description: 'Posts Checkov security scan results as comments on pull requests'
+author: 'Clouddrove'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+  sarif_file:
+    description: 'Path to the Checkov SARIF results file'
+    required: true
+    default: 'results.sarif'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install requests
+
+    - name: Run PR commenter script
+      shell: python
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        SARIF_FILE: ${{ inputs.sarif_file }}
+      run: |
+        import os
+        import json
+        import requests
+
+        GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+        PR_NUMBER = os.getenv("PR_NUMBER")
+        REPO = os.getenv("GITHUB_REPOSITORY")
+        SARIF_FILE = os.getenv("SARIF_FILE")
+
+        if not PR_NUMBER:
+            print("⚠️ Not running in a pull request context. Skipping comment.")
+            exit(0)
+
+        try:
+            with open(SARIF_FILE) as f:
+                sarif = json.load(f)
+        except Exception as e:
+            print(f"❌ Failed to load SARIF file: {e}")
+            exit(1)
+
+        results = sarif.get("runs", [{}])[0].get("results", [])
+        rules = {r["id"]: r for r in sarif["runs"][0].get("tool", {}).get("driver", {}).get("rules", [])}
+
+        if not results:
+            print("✅ No Checkov issues found.")
+            exit(0)
+
+        body = f"## 🛡️ Checkov Security Scan: {len(results)} Issues Found\n"
+
+        for result in results:
+            rule_id = result["ruleId"]
+            msg = result["message"]["text"]
+            loc = result["locations"][0]["physicalLocation"]
+            file = loc["artifactLocation"]["uri"]
+            start = loc["region"]["startLine"]
+            end = loc["region"].get("endLine", start)
+
+            url = f"https://github.com/{REPO}/blob/HEAD/{file}#L{start}-L{end}"
+            reference = rules.get(rule_id, {}).get("helpUri")
+
+            try:
+                with open(file, encoding="utf-8") as f:
+                    lines = f.readlines()[start-1:end]
+                    code_block = f"```hcl\n{''.join(lines).strip()}\n```"
+            except Exception:
+                code_block = "_Unable to read source lines_"
+
+            body += f"\n🔴 **[{rule_id}]** {msg}\n"
+            body += f"🔗 [{file}:{start}-{end}]({url})\n"
+            if reference:
+                body += f"📚 [More Info]({reference})\n"
+            body += f"{code_block}\n---\n"
+
+        print("📣 Posting comment to PR...")
+        res = requests.post(
+            f"https://api.github.com/repos/{REPO}/issues/{PR_NUMBER}/comments",
+            headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"},
+            json={"body": body}
+        )
+
+        if res.status_code == 201:
+            print("✅ Comment posted successfully.")
+        else:
+            print(f"❌ Failed to post comment. Status code: {res.status_code}")
+            print(res.text)
