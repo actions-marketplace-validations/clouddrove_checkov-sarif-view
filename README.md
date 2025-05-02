@@ -38,7 +38,7 @@ jobs:
           output_file: results.sarif
 
       - name: Post Checkov results to PR
-        uses: ${{ github.repository }}@${{ github.ref_name }}
+        uses: clouddrove/checkov-sarif-view@v0.0.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           sarif_file: results.sarif

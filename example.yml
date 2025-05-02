@@ -1,0 +1,25 @@
+name: Checkov Security Scan Example
+
+on:
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Run Checkov scan
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: .
+        output_format: sarif
+        output_file: results.sarif
+
+    - name: Post Checkov results to PR
+      uses: clouddrove/checkov-sarif-view@v0.0.1
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        sarif_file: results.sarif
